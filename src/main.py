@@ -1,18 +1,80 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableWidget, \
     QTableWidgetItem, QHBoxLayout, QTextEdit, QShortcut, QMenuBar, \
-    QMenu, QAction, QFileDialog, QScrollArea
-from PyQt5.QtGui import QKeySequence
-from PyQt5.QtCore import Qt, QTimer
+    QMenu, QAction, QFileDialog, QScrollArea, QPushButton
+from PyQt5.QtGui import QKeySequence, QIcon
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
 import openpyxl
 from richtext_display import CodeEditor
 from memo import TableMemo, Modification
 import pandas as pd
 from copy import deepcopy
-from utis import withoutconnect
+from utis import withoutconnect, wrap_code, decodestdoutput
 from interpreter import PythonInterpreter
 from chatgpt import ChatBot
 from prompt_template import prompt
+
+
+class QChatBot(QThread):
+    res_signal = pyqtSignal(str)
+
+    def __init__(self, prompt):
+        super(QChatBot, self).__init__()
+        self.formatted_prompt = prompt
+        self.bot = ChatBot()
+
+    def run(self):
+        response = self.bot.get_response(self.formatted_prompt)
+        answer = '\nA:\n' + response + '\n\n'
+        self.res_signal.emit(answer)
+
+
+class QInterpreter(QThread):
+    res_signal = pyqtSignal(tuple)
+
+    def __init__(self, code):
+        super(QInterpreter, self).__init__()
+        self.code = code
+        self.interpreter = PythonInterpreter()
+
+    def run(self):
+        response = self.interpreter.execute(self.code)
+        self.res_signal.emit(response)
+
+
+class ChatWidget(QWidget):
+    def __init__(self, main_win):
+        super(ChatWidget, self).__init__()
+        self.vbox = QVBoxLayout()
+
+        # readonly richtext editer to display the chat history
+        self.chat_history = CodeEditor()
+        self.chat_history.setReadOnly(True)
+        self.chat_history.setLineWrapMode(QTextEdit.NoWrap)
+        # add scroll area
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidget(self.chat_history)
+        self.chat_history.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.chat_history.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.vbox.addWidget(self.chat_history, 4)
+
+        self.accept_button = QPushButton('  accept')
+        accept_icon = QIcon('../accept.jpg')
+        self.accept_button.setIcon(accept_icon)
+        self.accept_button.setEnabled(False)
+        self.accept_button.clicked.connect(main_win.accept_the_result)
+        self.refuse_button = QPushButton('  refuse')
+        refuse_icon = QIcon("../refuse.jpg")
+        self.refuse_button.setIcon(refuse_icon)
+        self.refuse_button.setEnabled(False)
+        self.refuse_button.clicked.connect(main_win.refuse_the_result)
+        hbox2 = QHBoxLayout()
+        hbox2.addWidget(self.accept_button)
+        hbox2.addWidget(self.refuse_button)
+        self.vbox.addLayout(hbox2)
+        self.user_input = QTextEdit()
+        self.vbox.addWidget(self.user_input, 1)
+        self.setLayout(self.vbox)
 
 
 class Main(QWidget):
@@ -24,14 +86,16 @@ class Main(QWidget):
         self.chat_widgets = None
         self.hbox = self.vbox = None
         self.table_widget = None
-        self.chat_history = None
-        self.user_input = None
         self.dataframe = None
+        self.code = None
+        self.chat_thread = None
+        self.interpreter_thread = None
+        self.stdout = None
+        self.stderror = None
         self.recoder = TableMemo(self)
         self.init_ui()
         self.register_shortcut()
         self.init_table()
-        self.interpreter = PythonInterpreter()
         self.bot = ChatBot()
 
     def init_ui(self):
@@ -40,26 +104,15 @@ class Main(QWidget):
         hbox.setContentsMargins(0, 0, 0, 0)
         self.hbox = hbox
         self.vbox = vbox
-        chat_widget = QWidget()
+        # chat_widget = QWidget()
         # container to display excel data
         self.table_widget = QTableWidget()
         self.table_widget.itemChanged.connect(self.handle_item_changed)
         hbox.addWidget(self.table_widget, 3)
-        # readonly richtext editer to display the chat history
-        self.chat_history = CodeEditor()
-        self.chat_history.setReadOnly(True)
-        self.chat_history.setLineWrapMode(QTextEdit.NoWrap)
-        # add scroll area
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidget(self.chat_history)
-        self.chat_history.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.chat_history.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        vbox.addWidget(self.chat_history, 4)
-        # text editer to handle user's input
-        self.user_input = QTextEdit()
-        vbox.addWidget(self.user_input, 1)
-        chat_widget.setLayout(vbox)
-        hbox.addWidget(chat_widget, 2)
+
+        self.chat_widget = ChatWidget(self)
+        hbox.addWidget(self.chat_widget, 2)
+
         # menu setting
         menubar = QMenuBar()
         fileMenu = QMenu("&File", self)
@@ -135,13 +188,15 @@ class Main(QWidget):
         df = pd.read_excel(excel_file)
         shape = df.shape
         rows, cols = shape
-        self.table_widget.setRowCount(rows+1)
+        self.table_widget.setRowCount(rows + 1)
         self.table_widget.setColumnCount(cols)
         self.table_widget.setHorizontalHeaderLabels(list(df.columns))
         for i in range(rows):
             for j in range(cols):
                 value = df.iloc[i, j]
                 self.table_widget.setItem(i, j, QTableWidgetItem(str(value)))
+        for j in range(cols):
+            self.table_widget.setItem(rows, j, QTableWidgetItem(''))
         self.dataframe = deepcopy(df)
 
     def save(self):
@@ -188,37 +243,92 @@ class Main(QWidget):
             self.chat_widget.setVisible(True)
             self.collapsed = False
 
+    def switch_button(self, force_state=None):
+        if not force_state:
+            current_state = self.chat_widget.accept_button.isEnabled()
+        else:
+            current_state = not force_state
+        self.chat_widget.accept_button.setEnabled(not current_state)
+        self.chat_widget.refuse_button.setEnabled(not current_state)
+
     def type_one_by_one(self):
         if not self.answer:
             return
         if self.current_index < len(self.answer):
             next_char = self.answer[self.current_index]
-            self.chat_history.insertPlainText(next_char)
+            self.chat_widget.chat_history.insertPlainText(next_char)
             self.current_index += 1
         else:
-            self.answer = ''
+            self.code = self.answer
             self.timer.stop()
+            self.answer = None
+            # execute the code and display the result
+            self.execute()
+            self.switch_button()
+
+    def execute(self):
+        code = wrap_code(self.code, self.dataframe)
+        self.interpreter_thread = QInterpreter(code)
+        self.interpreter_thread.res_signal.connect(self.receive_output)
+        self.interpreter_thread.start()
+
+    @withoutconnect
+    def insert_result(self):
+        if self.stdout is None:
+            return
+        if isinstance(self.stdout, pd.DataFrame):
+            pass
+        else:
+            row_count = self.table_widget.rowCount()
+            col_count = self.table_widget.columnCount()
+            self.table_widget.setItem(row_count - 1, 0, QTableWidgetItem(str(self.stdout)))
+            self.stdout = None
+
+            # self.modification = Modification([row], [col], [self.dataframe.iloc[row, col]])
+            # d = self.dataframe.iloc[row, col]
+            # self.dataframe.iloc[row, col] = type(d)(value)
+            # self.save_checkpoint()
+
+    def receive_output(self, output):
+        stdout, stderror = output
+        try:
+            stdout = decodestdoutput(stdout)
+        except Exception:
+            return
+        self.stdout = stdout
+        self.stderro = stderror
+        # display the output and handle the error
+        self.insert_result()
 
     def chat(self):
         self.table_widget.maximumWidth()
-        if self.user_input.hasFocus():
-            message = self.user_input.toPlainText().strip()
+        if self.chat_widget.user_input.hasFocus():
+            message = self.chat_widget.user_input.toPlainText().strip()
             task = message
             message = "Q:\n{}".format(message)
             if message:
-                self.chat_history.append(message)
-                self.user_input.clear()
+                self.chat_widget.chat_history.append(message)
+                self.chat_widget.user_input.clear()
                 if self.dataframe is None:
                     self.answer = '\nA:\n' + '请先打开需要处理的excel!\n\n'
+                    self.current_index = 0
+                    self.timer.start(30)
                 else:
                     # get response from llm
-                    formatted_prompt = prompt.format(self.dataframe.shape, self.dataframe.head(3), self.dataframe.dtypes, task)
-                    response = self.bot.get_response(formatted_prompt)
-                    self.answer = '\nA:\n' + response + '\n\n'
-                # typing answer char by char
-                self.current_index = 0
-                self.timer.start(30)
+                    formatted_prompt = prompt.format(self.dataframe.shape, self.dataframe.head(3),
+                                                     self.dataframe.dtypes, task)
+
+                    # using QThread to avoid GUI freeze
+                    self.chat_thread = QChatBot(formatted_prompt)
+                    self.chat_thread.res_signal.connect(self.receive_answer)
+                    self.chat_thread.start()
+
         return
+
+    def receive_answer(self, answer):
+        self.answer = answer
+        self.current_index = 0
+        self.timer.start(30)
 
     def file_save(self):
         file_filter = "*.xlsx;;*.xls;;All Files(*)"
@@ -227,6 +337,13 @@ class Main(QWidget):
         if not path:
             return
         self.dataframe.to_excel(path)
+
+    def accept_the_result(self):
+        self.switch_button()
+
+    def refuse_the_result(self):
+        self.undo_modification()
+        self.switch_button()
 
 
 if __name__ == '__main__':

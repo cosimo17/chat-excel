@@ -44,12 +44,6 @@ def wrap_in_try_except(code):
     return astunparse.unparse(parsed_code)
 
 
-def stdout2dataframe(output_from_std):
-    output = ast.literal_eval(output_from_std)
-    data = pickle.loads(output)
-    return data
-
-
 class PythonInterpreter(object):
     def __init__(self):
         self.start_cmd = [sys.executable, '-i', '-q', '-u']

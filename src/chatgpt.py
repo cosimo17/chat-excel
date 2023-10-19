@@ -19,7 +19,8 @@ class ChatBot(object):
         if self.api_key is not None:
             response = openai.ChatCompletion.create(
                 model=self.model,
-                messages=msg)
+                messages=msg,
+                temperature=0.5)
 
             message = response.choices[0]['message']['content']
             return message
