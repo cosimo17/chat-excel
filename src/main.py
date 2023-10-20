@@ -6,27 +6,34 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
 import openpyxl
 from richtext_display import CodeEditor
-from memo import TableMemo, Modification
+from memo import TableMemo, InplaceModification, Modification
 import pandas as pd
 from copy import deepcopy
 from utis import withoutconnect, wrap_code, decodestdoutput
 from interpreter import PythonInterpreter
 from chatgpt import ChatBot
 from prompt_template import prompt
+from openai.error import APIError
 
 
 class QChatBot(QThread):
     res_signal = pyqtSignal(str)
 
-    def __init__(self, prompt, default_answer):
+    def __init__(self, prompt, default_answer, exception_answer):
         super(QChatBot, self).__init__()
         self.formatted_prompt = prompt
         self.bot = ChatBot()
         self.default_answer = default_answer
+        self.exception_answer = exception_answer
 
     def run(self):
-        answer = '\nA:\n' + self.bot.get_response(
-            self.formatted_prompt) + '\n\n' if self.formatted_prompt != '' else self.default_answer
+        if self.formatted_prompt == '':
+            answer = self.default_answer
+        else:
+            try:
+                answer = '\n#A:\n' + self.bot.get_response(self.formatted_prompt) + '\n\n'
+            except APIError:
+                answer = self.exception_answer
         self.res_signal.emit(answer)
 
 
@@ -93,7 +100,8 @@ class Main(QWidget):
         self.interpreter_thread = None
         self.stdout = None
         self.stderror = None
-        self.default_answer = '\nA:\n' + '请先打开需要处理的excel!\n\n'
+        self.default_answer = '\n#A:\n' + '请先打开需要处理的excel!\n\n'
+        self.exception_answer = '\n#A:\n' + "抱歉，AI助理响应失败，请稍后再试" + '\n\n'
         self.recoder = TableMemo(self)
         self.init_ui()
         self.register_shortcut()
@@ -207,14 +215,36 @@ class Main(QWidget):
     def restore(self, modification):
         if modification is None:
             return
-        rows = modification.row_indexs
-        cols = modification.col_indexs
-        values = modification.values
-        for i in range(len(modification)):
-            row, col, value = rows[i], cols[i], values[i]
-            self.table_widget.setItem(row, col, QTableWidgetItem(str(value)))
-            d = self.dataframe.iloc[row, col]
-            self.dataframe.iloc[row, col] = type(d)(value)
+        if isinstance(modification, InplaceModification):
+            rows = modification.row_indexs
+            cols = modification.col_indexs
+            values = modification.values
+            for i in range(len(modification)):
+                row, col, value = rows[i], cols[i], values[i]
+                if value != 'chatgpt-placeholder':
+                    self.table_widget.setItem(row, col, QTableWidgetItem(str(value)))
+                    d = self.dataframe.iloc[row, col]
+                    self.dataframe.iloc[row, col] = type(d)(value)
+                else:
+                    self.table_widget.setItem(row, col, QTableWidgetItem(''))
+        elif isinstance(modification, Modification):
+            df = modification.df
+            shape = df.shape
+            row_count = self.table_widget.rowCount()
+            col_count = self.table_widget.columnCount()
+            if shape == self.dataframe.shape:  # Update the entire table in place
+                for i in range(shape[0]):
+                    for j in range(shape[1]):
+                        value = df.iloc[i, j]
+                        self.table_widget.setItem(i, j, QTableWidgetItem(str(value)))
+            else:
+                # delete column
+                if shape[0] == self.dataframe.shape[0]:
+                    self.table_widget.setColumnCount(col_count - 1)
+
+                # delete row
+                if shape[1] == self.dataframe.shape[1]:
+                    self.table_widget.setRowCount(row_count - 1)
 
     @withoutconnect
     def undo_modification(self):
@@ -229,7 +259,7 @@ class Main(QWidget):
         row = item.row()
         col = item.column()
         value = item.text()
-        self.modification = Modification([row], [col], [self.dataframe.iloc[row, col]])
+        self.modification = InplaceModification([row], [col], [self.dataframe.iloc[row, col]])
         d = self.dataframe.iloc[row, col]
         self.dataframe.iloc[row, col] = type(d)(value)
         self.save_checkpoint()
@@ -264,10 +294,10 @@ class Main(QWidget):
             self.code = self.answer
             self.timer.stop()
             self.answer = None
-            if not (self.code == self.default_answer):
+            if not (self.code == self.default_answer or self.code == self.exception_answer):
                 # execute the code and display the result
                 self.execute()
-                self.switch_button()
+                # self.switch_button()
 
     def execute(self):
         code = wrap_code(self.code, self.dataframe)
@@ -279,18 +309,38 @@ class Main(QWidget):
     def insert_result(self):
         if self.stdout is None:
             return
+        row_count = self.table_widget.rowCount()
+        col_count = self.table_widget.columnCount()
+        # result is DataFrame
         if isinstance(self.stdout, pd.DataFrame):
-            pass
-        else:
-            row_count = self.table_widget.rowCount()
-            col_count = self.table_widget.columnCount()
-            self.table_widget.setItem(row_count - 1, 0, QTableWidgetItem(str(self.stdout)))
-            self.stdout = None
+            df = self.stdout
+            shape = df.shape
+            if shape == self.dataframe.shape:  # Update the entire table in place
+                for i in range(shape[0]):
+                    for j in range(shape[1]):
+                        value = df.iloc[i, j]
+                        self.table_widget.setItem(i, j, QTableWidgetItem(str(value)))
+            else:
+                if shape[0] == self.dataframe.shape[0]:  # insert new column
+                    self.table_widget.setColumnCount(col_count + 1)
+                    for i in range(shape[0]):
+                        value = df.iloc[i, shape[1] - 1]
+                        self.table_widget.setItem(i, col_count, QTableWidgetItem(str(value)))
+                if shape[1] == self.dataframe.shape[1]:  # insert new row
+                    self.table_widget.setRowCount(row_count + 1)
+                    for j in range(shape[1]):
+                        value = df.iloc[shape[0] - 1, j]
+                        self.table_widget.setItem(row_count - 1, j, QTableWidgetItem(str(value)))
+            self.modification = Modification(deepcopy(self.dataframe))
+            self.save_checkpoint()
+            self.dataframe = df
 
-            # self.modification = Modification([row], [col], [self.dataframe.iloc[row, col]])
-            # d = self.dataframe.iloc[row, col]
-            # self.dataframe.iloc[row, col] = type(d)(value)
-            # self.save_checkpoint()
+        # result is a scalar
+        else:
+            self.table_widget.setItem(row_count - 1, 0, QTableWidgetItem(str(self.stdout)))
+            self.modification = InplaceModification([row_count - 1], [0], ['chatgpt-placeholder'])
+            self.save_checkpoint()
+        self.stdout = None
 
     def receive_output(self, output):
         stdout, stderror = output
@@ -308,8 +358,8 @@ class Main(QWidget):
         if self.chat_widget.user_input.hasFocus():
             message = self.chat_widget.user_input.toPlainText().strip()
             task = message
-            message = "Q:\n{}".format(message)
             if message:
+                message = "Q:\n{}".format(message)
                 self.chat_widget.chat_history.append(message)
                 self.chat_widget.user_input.clear()
                 # get response from llm
@@ -317,7 +367,7 @@ class Main(QWidget):
                                                                                    self.dataframe.head(3),
                                                                                    self.dataframe.dtypes, task)
                 # using QThread to avoid GUI freeze
-                self.chat_thread = QChatBot(formatted_prompt, self.default_answer)
+                self.chat_thread = QChatBot(formatted_prompt, self.default_answer, self.exception_answer)
                 self.chat_thread.res_signal.connect(self.receive_answer)
                 self.chat_thread.start()
 
