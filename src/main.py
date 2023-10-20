@@ -18,14 +18,15 @@ from prompt_template import prompt
 class QChatBot(QThread):
     res_signal = pyqtSignal(str)
 
-    def __init__(self, prompt):
+    def __init__(self, prompt, default_answer):
         super(QChatBot, self).__init__()
         self.formatted_prompt = prompt
         self.bot = ChatBot()
+        self.default_answer = default_answer
 
     def run(self):
-        response = self.bot.get_response(self.formatted_prompt)
-        answer = '\nA:\n' + response + '\n\n'
+        answer = '\nA:\n' + self.bot.get_response(
+            self.formatted_prompt) + '\n\n' if self.formatted_prompt != '' else self.default_answer
         self.res_signal.emit(answer)
 
 
@@ -59,18 +60,18 @@ class ChatWidget(QWidget):
         self.vbox.addWidget(self.chat_history, 4)
 
         self.accept_button = QPushButton('  accept')
-        accept_icon = QIcon('../accept.jpg')
+        accept_icon = QIcon('../icons/accept.jpg')
         self.accept_button.setIcon(accept_icon)
         self.accept_button.setEnabled(False)
         self.accept_button.clicked.connect(main_win.accept_the_result)
-        self.refuse_button = QPushButton('  refuse')
-        refuse_icon = QIcon("../refuse.jpg")
-        self.refuse_button.setIcon(refuse_icon)
-        self.refuse_button.setEnabled(False)
-        self.refuse_button.clicked.connect(main_win.refuse_the_result)
+        self.cancle_button = QPushButton('  cancle')
+        cancle_icon = QIcon("../icons/cancle.jpg")
+        self.cancle_button.setIcon(cancle_icon)
+        self.cancle_button.setEnabled(False)
+        self.cancle_button.clicked.connect(main_win.cancle_the_result)
         hbox2 = QHBoxLayout()
         hbox2.addWidget(self.accept_button)
-        hbox2.addWidget(self.refuse_button)
+        hbox2.addWidget(self.cancle_button)
         self.vbox.addLayout(hbox2)
         self.user_input = QTextEdit()
         self.vbox.addWidget(self.user_input, 1)
@@ -92,6 +93,7 @@ class Main(QWidget):
         self.interpreter_thread = None
         self.stdout = None
         self.stderror = None
+        self.default_answer = '\nA:\n' + '请先打开需要处理的excel!\n\n'
         self.recoder = TableMemo(self)
         self.init_ui()
         self.register_shortcut()
@@ -249,7 +251,7 @@ class Main(QWidget):
         else:
             current_state = not force_state
         self.chat_widget.accept_button.setEnabled(not current_state)
-        self.chat_widget.refuse_button.setEnabled(not current_state)
+        self.chat_widget.cancle_button.setEnabled(not current_state)
 
     def type_one_by_one(self):
         if not self.answer:
@@ -262,9 +264,10 @@ class Main(QWidget):
             self.code = self.answer
             self.timer.stop()
             self.answer = None
-            # execute the code and display the result
-            self.execute()
-            self.switch_button()
+            if not (self.code == self.default_answer):
+                # execute the code and display the result
+                self.execute()
+                self.switch_button()
 
     def execute(self):
         code = wrap_code(self.code, self.dataframe)
@@ -309,19 +312,14 @@ class Main(QWidget):
             if message:
                 self.chat_widget.chat_history.append(message)
                 self.chat_widget.user_input.clear()
-                if self.dataframe is None:
-                    self.answer = '\nA:\n' + '请先打开需要处理的excel!\n\n'
-                    self.current_index = 0
-                    self.timer.start(30)
-                else:
-                    # get response from llm
-                    formatted_prompt = prompt.format(self.dataframe.shape, self.dataframe.head(3),
-                                                     self.dataframe.dtypes, task)
-
-                    # using QThread to avoid GUI freeze
-                    self.chat_thread = QChatBot(formatted_prompt)
-                    self.chat_thread.res_signal.connect(self.receive_answer)
-                    self.chat_thread.start()
+                # get response from llm
+                formatted_prompt = '' if self.dataframe is None else prompt.format(self.dataframe.shape,
+                                                                                   self.dataframe.head(3),
+                                                                                   self.dataframe.dtypes, task)
+                # using QThread to avoid GUI freeze
+                self.chat_thread = QChatBot(formatted_prompt, self.default_answer)
+                self.chat_thread.res_signal.connect(self.receive_answer)
+                self.chat_thread.start()
 
         return
 
@@ -341,7 +339,7 @@ class Main(QWidget):
     def accept_the_result(self):
         self.switch_button()
 
-    def refuse_the_result(self):
+    def cancle_the_result(self):
         self.undo_modification()
         self.switch_button()
 
