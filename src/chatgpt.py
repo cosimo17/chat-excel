@@ -23,6 +23,7 @@ class ChatBot(object):
                 temperature=0.5)
 
             message = response.choices[0]['message']['content']
-            return message
+            token_count = response['usage']['total_tokens']
+            return message, int(token_count)
         else:
-            return ''
+            return '', 0

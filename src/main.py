@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableWidget, \
     QTableWidgetItem, QHBoxLayout, QTextEdit, QShortcut, QMenuBar, \
-    QMenu, QAction, QFileDialog, QScrollArea, QPushButton
+    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel
 from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
@@ -17,7 +17,7 @@ from openai.error import APIError
 
 
 class QChatBot(QThread):
-    res_signal = pyqtSignal(str)
+    res_signal = pyqtSignal(tuple)
 
     def __init__(self, prompt, default_answer, exception_answer):
         super(QChatBot, self).__init__()
@@ -31,10 +31,11 @@ class QChatBot(QThread):
             answer = self.default_answer
         else:
             try:
-                answer = '\n#A:\n' + self.bot.get_response(self.formatted_prompt) + '\n\n'
+                answer, token_count = self.bot.get_response(self.formatted_prompt)
+                answer = '\n#A:\n' + answer + '\n\n'
             except APIError:
-                answer = self.exception_answer
-        self.res_signal.emit(answer)
+                answer, token_count = self.exception_answer, 0
+        self.res_signal.emit((answer, token_count))
 
 
 class QInterpreter(QThread):
@@ -82,7 +83,15 @@ class ChatWidget(QWidget):
         self.vbox.addLayout(hbox2)
         self.user_input = QTextEdit()
         self.vbox.addWidget(self.user_input, 1)
+
+        self.token_logger = QLabel("Token: 0 Cost: $0.0")
+        self.vbox.addWidget(self.token_logger)
         self.setLayout(self.vbox)
+
+    def set_token_usage(self, token):
+        cost = token / 1000 * 0.002
+        text = "Token: {} Cost: ${:.4f}".format(token, cost)
+        self.token_logger.setText(text)
 
 
 class Main(QWidget):
@@ -100,6 +109,7 @@ class Main(QWidget):
         self.interpreter_thread = None
         self.stdout = None
         self.stderror = None
+        self.token_count = 0
         self.default_answer = '\n#A:\n' + '请先打开需要处理的excel!\n\n'
         self.exception_answer = '\n#A:\n' + "抱歉，AI助理响应失败，请稍后再试" + '\n\n'
         self.recoder = TableMemo(self)
@@ -373,8 +383,11 @@ class Main(QWidget):
 
         return
 
-    def receive_answer(self, answer):
+    def receive_answer(self, res):
+        answer, token_count = res
         self.answer = answer
+        self.token_count += token_count
+        self.chat_widget.set_token_usage(self.token_count)
         self.current_index = 0
         self.timer.start(30)
 
