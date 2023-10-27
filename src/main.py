@@ -84,7 +84,7 @@ class ChatWidget(QWidget):
         self.user_input = QTextEdit()
         self.vbox.addWidget(self.user_input, 1)
 
-        self.token_logger = QLabel("Token: 0 Cost: $0.0")
+        self.token_logger = QLabel("Token:0   Cost:$0.0")
         self.vbox.addWidget(self.token_logger)
         self.setLayout(self.vbox)
 
