@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableWidget, \
     QTableWidgetItem, QHBoxLayout, QTextEdit, QShortcut, QMenuBar, \
-    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel, QTabWidget
+    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel, QTabWidget, QComboBox
 from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
@@ -69,15 +69,15 @@ class ChatWidget(QWidget):
         self.chat_history.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.vbox.addWidget(self.chat_history, 4)
 
-        self.switch_mode_button = QPushButton('switch mode')
-        accept_icon = QIcon('../icons/switch.jpg')
-        self.switch_mode_button.setIcon(accept_icon)
-        self.switch_mode_button.clicked.connect(main_win.switch_mode)
-        self.mode_info = QLabel("chat mode")
+        self.switch_mode_box = QComboBox()
+        self.switch_mode_box.addItem("Chat")
+        self.switch_mode_box.addItem("Plot")
+        self.switch_mode_box.currentIndexChanged.connect(main_win.switch_mode)
+        self.mode_info = QLabel("mode: ")
         hbox2 = QHBoxLayout()
-        hbox2.addWidget(self.switch_mode_button)
         # hbox2.addSpacing(20)
         hbox2.addWidget(self.mode_info)
+        hbox2.addWidget(self.switch_mode_box)
         hbox2.addStretch(1)
         self.vbox.addLayout(hbox2)
         self.user_input = QTextEdit()
@@ -298,14 +298,6 @@ class Main(QWidget):
             self.chat_widget.setVisible(True)
             self.collapsed = False
 
-    def switch_button(self, force_state=None):
-        if not force_state:
-            current_state = self.chat_widget.switch_mode_button.isEnabled()
-        else:
-            current_state = not force_state
-        self.chat_widget.switch_mode_button.setEnabled(not current_state)
-        self.chat_widget.cancle_button.setEnabled(not current_state)
-
     def type_one_by_one(self):
         if not self.answer:
             return
@@ -432,10 +424,8 @@ class Main(QWidget):
             return
         self.dataframe.to_excel(path)
 
-    def switch_mode(self):
-        self.mode = Mode.PLOT_MODE if self.mode == Mode.CHAT_MODE else Mode.CHAT_MODE
-        mode_info = "chat mode" if self.mode == Mode.CHAT_MODE else "plot mode"
-        self.chat_widget.mode_info.setText(mode_info)
+    def switch_mode(self, index):
+        self.mode = Mode.PLOT_MODE if self.chat_widget.switch_mode_box.currentText() == "Plot" else Mode.CHAT_MODE
 
 
 if __name__ == '__main__':
