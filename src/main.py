@@ -1,19 +1,21 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableWidget, \
     QTableWidgetItem, QHBoxLayout, QTextEdit, QShortcut, QMenuBar, \
-    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel
+    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel, QTabWidget
 from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
 import openpyxl
 from richtext_display import CodeEditor
+from plotwin import PlotWidget
 from memo import TableMemo, InplaceModification, Modification
 import pandas as pd
 from copy import deepcopy
-from utis import withoutconnect, wrap_code, decodestdoutput
+from utis import withoutconnect, wrap_code, decodestdoutput, extract_func_info
 from interpreter import PythonInterpreter
 from chatgpt import ChatBot
-from prompt_template import prompt
+from prompt_template import prompt, chart_prompt
 from openai.error import APIError
+from enum import Enum
 
 
 class QChatBot(QThread):
@@ -67,19 +69,16 @@ class ChatWidget(QWidget):
         self.chat_history.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.vbox.addWidget(self.chat_history, 4)
 
-        self.accept_button = QPushButton('  accept')
-        accept_icon = QIcon('../icons/accept.jpg')
-        self.accept_button.setIcon(accept_icon)
-        self.accept_button.setEnabled(False)
-        self.accept_button.clicked.connect(main_win.accept_the_result)
-        self.cancle_button = QPushButton('  cancle')
-        cancle_icon = QIcon("../icons/cancle.jpg")
-        self.cancle_button.setIcon(cancle_icon)
-        self.cancle_button.setEnabled(False)
-        self.cancle_button.clicked.connect(main_win.cancle_the_result)
+        self.switch_mode_button = QPushButton('switch mode')
+        accept_icon = QIcon('../icons/switch.jpg')
+        self.switch_mode_button.setIcon(accept_icon)
+        self.switch_mode_button.clicked.connect(main_win.switch_mode)
+        self.mode_info = QLabel("chat mode")
         hbox2 = QHBoxLayout()
-        hbox2.addWidget(self.accept_button)
-        hbox2.addWidget(self.cancle_button)
+        hbox2.addWidget(self.switch_mode_button)
+        # hbox2.addSpacing(20)
+        hbox2.addWidget(self.mode_info)
+        hbox2.addStretch(1)
         self.vbox.addLayout(hbox2)
         self.user_input = QTextEdit()
         self.vbox.addWidget(self.user_input, 1)
@@ -92,6 +91,11 @@ class ChatWidget(QWidget):
         cost = token / 1000 * 0.002
         text = "Token: {} Cost: ${:.4f}".format(token, cost)
         self.token_logger.setText(text)
+
+
+class Mode(Enum):
+    CHAT_MODE = 1
+    PLOT_MODE = 2
 
 
 class Main(QWidget):
@@ -109,6 +113,7 @@ class Main(QWidget):
         self.interpreter_thread = None
         self.stdout = None
         self.stderror = None
+        self.mode = Mode.CHAT_MODE
         self.token_count = 0
         self.default_answer = '\n#A:\n' + '请先打开需要处理的excel!\n\n'
         self.exception_answer = '\n#A:\n' + "抱歉，AI助理响应失败，请稍后再试" + '\n\n'
@@ -130,8 +135,16 @@ class Main(QWidget):
         self.table_widget.itemChanged.connect(self.handle_item_changed)
         hbox.addWidget(self.table_widget, 3)
 
+        self.tabs = QTabWidget()
+        self.tabs.setTabPosition(QTabWidget.West)
+        self.tabs.setMovable(True)
+
         self.chat_widget = ChatWidget(self)
-        hbox.addWidget(self.chat_widget, 2)
+        self.plot_widget = PlotWidget()
+        self.tabs.addTab(self.chat_widget, "chat")
+        self.tabs.addTab(self.plot_widget, 'plot')
+        hbox.addWidget(self.tabs, 2)
+        # hbox.addWidget(self.chat_widget, 2)
 
         # menu setting
         menubar = QMenuBar()
@@ -287,10 +300,10 @@ class Main(QWidget):
 
     def switch_button(self, force_state=None):
         if not force_state:
-            current_state = self.chat_widget.accept_button.isEnabled()
+            current_state = self.chat_widget.switch_mode_button.isEnabled()
         else:
             current_state = not force_state
-        self.chat_widget.accept_button.setEnabled(not current_state)
+        self.chat_widget.switch_mode_button.setEnabled(not current_state)
         self.chat_widget.cancle_button.setEnabled(not current_state)
 
     def type_one_by_one(self):
@@ -310,10 +323,24 @@ class Main(QWidget):
                 # self.switch_button()
 
     def execute(self):
-        code = wrap_code(self.code, self.dataframe)
-        self.interpreter_thread = QInterpreter(code)
-        self.interpreter_thread.res_signal.connect(self.receive_output)
-        self.interpreter_thread.start()
+        if self.mode == Mode.CHAT_MODE:
+            code = wrap_code(self.code, self.dataframe)
+            self.interpreter_thread = QInterpreter(code)
+            self.interpreter_thread.res_signal.connect(self.receive_output)
+            self.interpreter_thread.start()
+        elif self.mode == Mode.PLOT_MODE:
+            df = self.dataframe
+            func_names, func_args, func_kwargs = extract_func_info(self.code)
+            _func_args = []
+            for args in func_args:
+                for i in range(len(args)):
+                    args[i] = eval(args[i])
+                _func_args.append(args)
+            func_args = _func_args
+            self.plot_widget.new_axes()
+            self.plot_widget.call_func(func_names, func_args, func_kwargs)
+            self.plot_widget.add_figure()
+            self.tabs.setCurrentIndex(1)
 
     @withoutconnect
     def insert_result(self):
@@ -372,16 +399,22 @@ class Main(QWidget):
                 message = "Q:\n{}".format(message)
                 self.chat_widget.chat_history.append(message)
                 self.chat_widget.user_input.clear()
+                formatted_prompt = self.format_prompt(task)
                 # get response from llm
-                formatted_prompt = '' if self.dataframe is None else prompt.format(self.dataframe.shape,
-                                                                                   self.dataframe.head(3),
-                                                                                   self.dataframe.dtypes, task)
                 # using QThread to avoid GUI freeze
                 self.chat_thread = QChatBot(formatted_prompt, self.default_answer, self.exception_answer)
                 self.chat_thread.res_signal.connect(self.receive_answer)
                 self.chat_thread.start()
 
         return
+
+    def format_prompt(self, task):
+        template_prompt = prompt if self.mode == Mode.CHAT_MODE else chart_prompt
+        formatted_prompt = '' if self.dataframe is None \
+            else template_prompt.format(self.dataframe.shape,
+                                        self.dataframe.head(3),
+                                        self.dataframe.dtypes, task)
+        return formatted_prompt
 
     def receive_answer(self, res):
         answer, token_count = res
@@ -399,12 +432,10 @@ class Main(QWidget):
             return
         self.dataframe.to_excel(path)
 
-    def accept_the_result(self):
-        self.switch_button()
-
-    def cancle_the_result(self):
-        self.undo_modification()
-        self.switch_button()
+    def switch_mode(self):
+        self.mode = Mode.PLOT_MODE if self.mode == Mode.CHAT_MODE else Mode.CHAT_MODE
+        mode_info = "chat mode" if self.mode == Mode.CHAT_MODE else "plot mode"
+        self.chat_widget.mode_info.setText(mode_info)
 
 
 if __name__ == '__main__':

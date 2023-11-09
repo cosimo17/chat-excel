@@ -34,6 +34,34 @@ def wrap_code(code, df):
     return code
 
 
+def extract_func_info(code):
+    pattern = re.compile(r'(\w+)\((.*?)\)')
+    matches = pattern.findall(code)
+
+    func_names = []
+    func_args = []
+    func_kwargs = []
+    for match in matches:
+        function_name = match[0]
+        func_names.append(function_name)
+        arguments = match[1]
+        current_func_args = []
+        current_func_kwargs = {}
+        if len(arguments):
+            arguments = arguments.split(',')
+            arguments = [v.replace(' ', '') for v in arguments]
+            for arg in arguments:
+                if '=' in arg:
+                    k, v = arg.split('=')
+                    v = v.replace("\'", '')
+                    current_func_kwargs[k] = v
+                else:
+                    current_func_args.append(arg)
+        func_args.append(current_func_args)
+        func_kwargs.append(current_func_kwargs)
+    return func_names, func_args, func_kwargs
+
+
 def decodestdoutput(output_from_std):
     output = ast.literal_eval(output_from_std)
     data = pickle.loads(output)
