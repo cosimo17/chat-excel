@@ -34,7 +34,12 @@ def wrap_code(code, df):
     return code
 
 
-def extract_func_info(code):
+def extract_func_info(code, df):
+    lines = code.split(",")
+    for line in lines:
+        if is_assignment_statement(line):
+            exec(line)
+
     pattern = re.compile(r'(\w+)\((.*?)\)')
     matches = pattern.findall(code)
 
@@ -51,12 +56,16 @@ def extract_func_info(code):
             arguments = arguments.split(',')
             arguments = [v.replace(' ', '') for v in arguments]
             for arg in arguments:
+                # keyword arg
                 if '=' in arg:
                     k, v = arg.split('=')
-                    v = v.replace("\'", '')
+                    if is_subscript_and_index(v):
+                        v = eval(v)
+                    else:
+                        v = v.replace("\'", '')
                     current_func_kwargs[k] = v
                 else:
-                    current_func_args.append(arg)
+                    current_func_args.append(eval(arg))
         func_args.append(current_func_args)
         func_kwargs.append(current_func_kwargs)
     return func_names, func_args, func_kwargs
@@ -66,3 +75,29 @@ def decodestdoutput(output_from_std):
     output = ast.literal_eval(output_from_std)
     data = pickle.loads(output)
     return data
+
+
+def is_assignment_statement(line):
+    try:
+        tree = ast.parse(line)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                return True
+    except SyntaxError:
+        return False
+
+    return False
+
+
+def is_subscript_and_index(line):
+    try:
+        tree = ast.parse(line)
+        subscript, index = False, False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript):
+                subscript = True
+            elif isinstance(node, ast.Index):
+                index = True
+        return subscript and index
+    except SyntaxError:
+        return False

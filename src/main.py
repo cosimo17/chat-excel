@@ -11,6 +11,7 @@ from memo import TableMemo, InplaceModification, Modification
 import pandas as pd
 from copy import deepcopy
 from utis import withoutconnect, wrap_code, decodestdoutput, extract_func_info
+from utis import is_assignment_statement
 from interpreter import PythonInterpreter
 from chatgpt import ChatBot
 from prompt_template import prompt, chart_prompt
@@ -21,9 +22,9 @@ from enum import Enum
 class QChatBot(QThread):
     res_signal = pyqtSignal(tuple)
 
-    def __init__(self, prompt, default_answer, exception_answer):
+    def __init__(self, prompts, default_answer, exception_answer):
         super(QChatBot, self).__init__()
-        self.formatted_prompt = prompt
+        self.formatted_prompt = prompts
         self.bot = ChatBot()
         self.default_answer = default_answer
         self.exception_answer = exception_answer
@@ -322,13 +323,7 @@ class Main(QWidget):
             self.interpreter_thread.start()
         elif self.mode == Mode.PLOT_MODE:
             df = self.dataframe
-            func_names, func_args, func_kwargs = extract_func_info(self.code)
-            _func_args = []
-            for args in func_args:
-                for i in range(len(args)):
-                    args[i] = eval(args[i])
-                _func_args.append(args)
-            func_args = _func_args
+            func_names, func_args, func_kwargs = extract_func_info(self.code, df)
             self.plot_widget.new_axes()
             self.plot_widget.call_func(func_names, func_args, func_kwargs)
             self.plot_widget.add_figure()
