@@ -20,7 +20,7 @@ class ChatBot(object):
             response = openai.ChatCompletion.create(
                 model=self.model,
                 messages=msg,
-                temperature=0.5)
+                temperature=0.3)
 
             message = response.choices[0]['message']['content']
             token_count = response['usage']['total_tokens']
