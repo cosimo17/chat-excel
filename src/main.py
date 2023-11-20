@@ -11,7 +11,6 @@ from memo import TableMemo, InplaceModification, Modification
 import pandas as pd
 from copy import deepcopy
 from utis import withoutconnect, wrap_code, decodestdoutput, extract_func_info
-from utis import is_assignment_statement
 from interpreter import PythonInterpreter
 from chatgpt import ChatBot
 from prompt_template import prompt, chart_prompt
@@ -32,6 +31,7 @@ class QChatBot(QThread):
     def run(self):
         if self.formatted_prompt == '':
             answer = self.default_answer
+            token_count = 0
         else:
             try:
                 answer, token_count = self.bot.get_response(self.formatted_prompt)
@@ -386,7 +386,10 @@ class Main(QWidget):
                 message = "Q:\n{}".format(message)
                 self.chat_widget.chat_history.append(message)
                 self.chat_widget.user_input.clear()
-                formatted_prompt = self.format_prompt(task)
+                if self.dataframe is not None:
+                    formatted_prompt = self.format_prompt(task)
+                else:
+                    formatted_prompt = ''
                 # get response from llm
                 # using QThread to avoid GUI freeze
                 self.chat_thread = QChatBot(formatted_prompt, self.default_answer, self.exception_answer)
