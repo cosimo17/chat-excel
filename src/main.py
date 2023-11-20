@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableWidget, \
     QTableWidgetItem, QHBoxLayout, QTextEdit, QShortcut, QMenuBar, \
-    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel, QTabWidget, QComboBox
+    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel, QTabWidget, \
+    QComboBox, QInputDialog, QMessageBox
 from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
@@ -14,7 +15,7 @@ from utis import withoutconnect, wrap_code, decodestdoutput, extract_func_info
 from interpreter import PythonInterpreter
 from chatgpt import ChatBot
 from prompt_template import prompt, chart_prompt
-from openai.error import APIError
+from openai.error import APIError, AuthenticationError
 from enum import Enum
 from pathlib import Path
 import os
@@ -25,10 +26,10 @@ project_path = Path(__file__).parent.parent
 class QChatBot(QThread):
     res_signal = pyqtSignal(tuple)
 
-    def __init__(self, prompts, default_answer, exception_answer):
+    def __init__(self, bot, prompts, default_answer, exception_answer):
         super(QChatBot, self).__init__()
         self.formatted_prompt = prompts
-        self.bot = ChatBot()
+        self.bot = bot
         self.default_answer = default_answer
         self.exception_answer = exception_answer
 
@@ -41,6 +42,8 @@ class QChatBot(QThread):
                 answer, token_count = self.bot.get_response(self.formatted_prompt)
                 answer = '\n#A:\n' + answer + '\n\n'
             except APIError:
+                answer, token_count = self.exception_answer, 0
+            except AuthenticationError:
                 answer, token_count = self.exception_answer, 0
         self.res_signal.emit((answer, token_count))
 
@@ -121,12 +124,19 @@ class Main(QWidget):
         self.mode = Mode.CHAT_MODE
         self.token_count = 0
         self.default_answer = '\n#A:\n' + '请先打开需要处理的excel!\n\n'
-        self.exception_answer = '\n#A:\n' + "抱歉，AI助理响应失败，请稍后再试" + '\n\n'
+        self.exception_answer = '\n#A:\n' + "抱歉，AI助理响应失败，请检查你的网络连接与API-KEY，" \
+                                            "并请稍后再试" + '\n\n'
         self.recoder = TableMemo(self)
         self.init_ui()
         self.register_shortcut()
         self.init_table()
         self.bot = ChatBot()
+        self.api_key = os.getenv('APIKEY', None)
+        self.key_memo = os.path.join(project_path, "apikey.txt")
+        if os.path.exists(self.key_memo):
+            with open(self.key_memo, 'r') as f:
+                self.api_key = f.read().rstrip()
+                self.bot.set_api_key(self.api_key)
 
     def init_ui(self):
         icon_path = os.path.join(str(project_path), "assets", "bot.jpg")
@@ -365,6 +375,17 @@ class Main(QWidget):
         self.insert_result()
 
     def chat(self):
+        if self.api_key is None:
+            text, ok = QInputDialog.getText(self, 'APIKEY 设置', '请输入API KEY:')
+            if ok:
+                self.api_key = text
+                self.bot.set_api_key(text)
+                reply = QMessageBox.question(self, '确认', '是否需要记住APIKEY',
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    self.save_apikey()
+            else:
+                return
         self.table_widget.maximumWidth()
         if self.chat_widget.user_input.hasFocus():
             message = self.chat_widget.user_input.toPlainText().strip()
@@ -379,7 +400,7 @@ class Main(QWidget):
                     formatted_prompt = ''
                 # get response from llm
                 # using QThread to avoid GUI freeze
-                self.chat_thread = QChatBot(formatted_prompt, self.default_answer, self.exception_answer)
+                self.chat_thread = QChatBot(self.bot, formatted_prompt, self.default_answer, self.exception_answer)
                 self.chat_thread.res_signal.connect(self.receive_answer)
                 self.chat_thread.start()
 
@@ -411,6 +432,10 @@ class Main(QWidget):
 
     def switch_mode(self, index):
         self.mode = Mode.PLOT_MODE if self.chat_widget.switch_mode_box.currentText() == "Plot" else Mode.CHAT_MODE
+
+    def save_apikey(self):
+        with open(self.key_memo, 'w') as f:
+            f.write(self.api_key)
 
 
 if __name__ == '__main__':
