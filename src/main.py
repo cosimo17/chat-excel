@@ -138,7 +138,6 @@ class Main(QWidget):
 
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.West)
-        self.tabs.setMovable(True)
 
         self.chat_widget = ChatWidget(self)
         self.plot_widget = PlotWidget()
