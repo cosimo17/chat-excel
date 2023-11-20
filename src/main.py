@@ -129,7 +129,7 @@ class Main(QWidget):
         self.bot = ChatBot()
 
     def init_ui(self):
-        icon_path = os.path.join(str(project_path), "icons", "bot.jpg")
+        icon_path = os.path.join(str(project_path), "assets", "bot.jpg")
         QApplication.setWindowIcon(QIcon(icon_path))
         hbox = QHBoxLayout()
         vbox = QVBoxLayout()
