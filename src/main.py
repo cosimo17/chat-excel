@@ -16,6 +16,10 @@ from chatgpt import ChatBot
 from prompt_template import prompt, chart_prompt
 from openai.error import APIError
 from enum import Enum
+from pathlib import Path
+import os
+
+project_path = Path(__file__).parent.parent
 
 
 class QChatBot(QThread):
@@ -125,6 +129,8 @@ class Main(QWidget):
         self.bot = ChatBot()
 
     def init_ui(self):
+        icon_path = os.path.join(str(project_path), "icons", "bot.jpg")
+        QApplication.setWindowIcon(QIcon(icon_path))
         hbox = QHBoxLayout()
         vbox = QVBoxLayout()
         hbox.setContentsMargins(0, 0, 0, 0)
@@ -198,7 +204,6 @@ class Main(QWidget):
             return
         self.load_data_with_pandas(filename)
         self.loaded = True
-
 
     def load_data_with_pandas(self, excel_file):
         df = pd.read_excel(excel_file)
