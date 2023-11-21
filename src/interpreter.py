@@ -58,7 +58,8 @@ class PythonInterpreter(object):
                                         stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE,
                                         text=True,
-                                        bufsize=0)
+                                        bufsize=0,
+                                        encoding='utf-8')
 
     def execute(self, code):
         self.start_subprocess()
@@ -66,19 +67,3 @@ class PythonInterpreter(object):
         self.process.stdin.close()  # Important: close stdin to signal that no more input will be sent
         stdout, stderr = self.process.communicate()
         return stdout, stderr
-
-
-def main():
-    ip = PythonInterpreter()
-    code = "import pandas as pd\nimport pickle\nimport os\n\na=123\n\ndf = pd.DataFrame({'A': list(range(2)), 'B': list(range(2))})\n" \
-           "print(pickle.dumps(df))"
-    code = wrap_in_try_except(code)
-    print(code)
-    for i in range(2):
-        output, _ = ip.execute(code)
-        data = stdout2dataframe(output)
-        print(data.shape)
-
-
-if __name__ == '__main__':
-    main()
