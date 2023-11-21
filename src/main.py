@@ -5,7 +5,6 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableWidget, \
 from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
-import openpyxl
 from richtext_display import CodeEditor
 from plotwin import PlotWidget
 from memo import TableMemo, InplaceModification, Modification
@@ -19,6 +18,8 @@ from openai.error import APIError, AuthenticationError
 from enum import Enum
 from pathlib import Path
 import os
+import locale
+from configparser import ConfigParser
 
 project_path = Path(__file__).parent.parent
 
@@ -123,9 +124,8 @@ class Main(QWidget):
         self.stderror = None
         self.mode = Mode.CHAT_MODE
         self.token_count = 0
-        self.default_answer = '\n#A:\n' + '请先打开需要处理的excel!\n\n'
-        self.exception_answer = '\n#A:\n' + "抱歉，AI助理响应失败，请检查你的网络连接与API-KEY，" \
-                                            "并请稍后再试" + '\n\n'
+        self.default_answer = None
+        self.exception_answer = None
         self.recoder = TableMemo(self)
         self.init_ui()
         self.register_shortcut()
@@ -184,6 +184,19 @@ class Main(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.type_one_by_one)
         self.current_index = 0
+        self.load_tips_info()
+
+    def load_tips_info(self):
+        language, region = locale.getlocale()
+        language = language.lower()
+        lan = 'chinese' if 'chinese' in language else 'english'
+        parser = ConfigParser()
+        parser.read(os.path.join(str(project_path), 'src', 'tips_info.ini'), encoding='utf-8')
+        self.default_answer = parser.get(lan, 'default_answer').replace('\\n', '\n')
+        self.exception_answer = parser.get(lan, 'exception_answer').replace('\\n', '\n')
+        self.api_win_title = parser.get(lan, 'api_win_title').replace('\\n', '\n')
+        self.input_tip = parser.get(lan, 'input_tip').replace('\\n', '\n')
+        self.confirm_tip = parser.get(lan, 'confirm_tip').replace('\\n', '\n')
 
     def register_shortcut(self):
         # hotkey
@@ -376,11 +389,11 @@ class Main(QWidget):
 
     def chat(self):
         if self.api_key is None:
-            text, ok = QInputDialog.getText(self, 'APIKEY 设置', '请输入API KEY:')
+            text, ok = QInputDialog.getText(self, self.api_win_title, self.input_tip)
             if ok:
                 self.api_key = text
                 self.bot.set_api_key(text)
-                reply = QMessageBox.question(self, '确认', '是否需要记住APIKEY',
+                reply = QMessageBox.question(self, '', self.confirm_tip,
                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply == QMessageBox.Yes:
                     self.save_apikey()

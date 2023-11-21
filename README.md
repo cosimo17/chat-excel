@@ -1,3 +1,4 @@
+[English](README_en.md)
 # CHAT-EXCEL
 大语言模型，让excel更简单。使用对话式AI模型来辅助进行Excel数据分析与图表绘制
 
