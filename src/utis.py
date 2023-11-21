@@ -35,7 +35,7 @@ def wrap_code(code, df):
 
 
 def extract_func_info(code, df):
-    lines = code.split(",")
+    lines = code.split("\n")
     for line in lines:
         if is_assignment_statement(line):
             exec(line)
@@ -59,7 +59,7 @@ def extract_func_info(code, df):
                 # keyword arg
                 if '=' in arg:
                     k, v = arg.split('=')
-                    if is_subscript_and_index(v):
+                    if is_subscript_and_index(v) or is_constant(v):
                         v = eval(v)
                     else:
                         v = v.replace("\'", '')
@@ -101,3 +101,15 @@ def is_subscript_and_index(line):
         return subscript and index
     except SyntaxError:
         return False
+
+
+def is_constant(line):
+    try:
+        tree = ast.parse(line)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant):
+                return True
+    except SyntaxError:
+        return False
+
+    return False
