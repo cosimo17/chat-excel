@@ -357,6 +357,7 @@ class Main(QWidget):
             else:
                 if shape[0] == self.dataframe.shape[0]:  # insert new column
                     self.table_widget.setColumnCount(col_count + 1)
+                    self.table_widget.setHorizontalHeaderLabels(list(df.columns))
                     for i in range(shape[0]):
                         value = df.iloc[i, shape[1] - 1]
                         self.table_widget.setItem(i, col_count, QTableWidgetItem(str(value)))
