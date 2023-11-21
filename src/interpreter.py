@@ -2,18 +2,11 @@ import subprocess
 import sys
 import ast
 import astunparse
-import pandas as pd
-import pickle
 
 
 def wrap_in_try_except(code):
-    # Add import traceback
     code = "import traceback\n" + code
-
-    # Parse the input code into an AST
     parsed_code = ast.parse(code)
-
-    # Wrap the entire code's AST in a single try-except block
     try_except = ast.Try(
         body=parsed_code.body,
         handlers=[
@@ -35,12 +28,7 @@ def wrap_in_try_except(code):
         orelse=[],
         finalbody=[]
     )
-
-    # Assign the try-except block as the new body
     parsed_code.body = [try_except]
-
-    # Convert the modified AST back to source code
-
     return astunparse.unparse(parsed_code)
 
 
