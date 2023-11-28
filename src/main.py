@@ -20,6 +20,7 @@ from pathlib import Path
 import os
 import locale
 from configparser import ConfigParser
+from logger import logger
 
 project_path = Path(__file__).parent.parent
 
@@ -229,7 +230,11 @@ class Main(QWidget):
         self.loaded = True
 
     def load_data_with_pandas(self, excel_file):
-        df = pd.read_excel(excel_file)
+        try:
+            df = pd.read_excel(excel_file)
+        except ValueError as e:
+            logger.debug(e)
+            return
         shape = df.shape
         rows, cols = shape
         self.table_widget.setRowCount(rows + 1)
