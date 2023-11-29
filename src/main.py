@@ -195,6 +195,7 @@ class Main(QWidget):
         parser.read(os.path.join(str(project_path), 'src', 'tips_info.ini'), encoding='utf-8')
         self.default_answer = parser.get(lan, 'default_answer').replace('\\n', '\n')
         self.exception_answer = parser.get(lan, 'exception_answer').replace('\\n', '\n')
+        self.unknown_answer = parser.get(lan, 'unknown_answer')
         self.api_win_title = parser.get(lan, 'api_win_title').replace('\\n', '\n')
         self.input_tip = parser.get(lan, 'input_tip').replace('\\n', '\n')
         self.confirm_tip = parser.get(lan, 'confirm_tip').replace('\\n', '\n')
@@ -315,6 +316,11 @@ class Main(QWidget):
             self.collapsed = False
 
     def type_one_by_one(self):
+        def is_python_source_code(s):
+            return not (self.code == self.default_answer or
+                        self.code == self.exception_answer or
+                        "i don't know" in s.lower())
+
         if not self.answer:
             return
         if self.current_index < len(self.answer):
@@ -325,10 +331,9 @@ class Main(QWidget):
             self.code = self.answer
             self.timer.stop()
             self.answer = None
-            if not (self.code == self.default_answer or self.code == self.exception_answer):
+            if is_python_source_code(self.code):
                 # execute the code and display the result
                 self.execute()
-                # self.switch_button()
 
     def execute(self):
         if self.mode == Mode.CHAT_MODE:
