@@ -334,6 +334,7 @@ class Main(QWidget):
             if is_python_source_code(self.code):
                 # execute the code and display the result
                 self.execute()
+            self.chat_widget.switch_mode_box.setEnabled(True)
 
     def execute(self):
         if self.mode == Mode.CHAT_MODE:
@@ -424,6 +425,7 @@ class Main(QWidget):
                     formatted_prompt = ''
                 # get response from llm
                 # using QThread to avoid GUI freeze
+                self.chat_widget.switch_mode_box.setEnabled(False)
                 self.chat_thread = QChatBot(self.bot, formatted_prompt, self.default_answer, self.exception_answer)
                 self.chat_thread.res_signal.connect(self.receive_answer)
                 self.chat_thread.start()
