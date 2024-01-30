@@ -5,6 +5,14 @@
 # Demo
 ![demo1](assets/demo1.gif)
 
+# 安装
+```bash
+git clone https://github.com/cosimo17/chat-excel.git
+cd chat-excel
+pip install -r requirements.txt
+python src/main.py
+```
+
 # 快捷键
 + Ctrl + Q, 将问题发送给AI
 + Ctrl + A, 折叠/展开聊天窗口

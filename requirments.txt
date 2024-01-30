@@ -1,0 +1,6 @@
+PyQt5
+openai
+pandas
+openpyxl
+astunparse
+matplotlib

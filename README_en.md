@@ -5,6 +5,14 @@ Large language model make Excel simpler. Using a conversational AI model to assi
 # Demo
 ![demo1](assets/demo1.gif)
 
+# Installation
+```bash
+git clone https://github.com/cosimo17/chat-excel.git
+cd chat-excel
+pip install -r requirements.txt
+python src/main.py
+```
+
 # Shortcut keys
 + Ctrl + Q, send your requirement to AI
 + Ctrl + A, collapse/expand the chat widget
