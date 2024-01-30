@@ -3,7 +3,7 @@
 大语言模型，让excel更简单。使用对话式AI模型来辅助进行Excel数据分析与图表绘制
 
 # Demo
-![demo1](assets/demo1.gif)
+![demo1](assets/demo-zh.gif)
 
 # 安装
 ```bash

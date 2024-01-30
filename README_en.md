@@ -3,7 +3,7 @@
 Large language model make Excel simpler. Using a conversational AI model to assist in Excel data analysis and chart drawing.
 
 # Demo
-![demo1](assets/demo1.gif)
+![demo1](assets/demo-en.gif)
 
 # Installation
 ```bash
