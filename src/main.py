@@ -224,6 +224,7 @@ class MainWin(QWidget):
         self.default_answer = parser.get(lan, 'default_answer').replace('\\n', '\n')
         self.exception_answer = parser.get(lan, 'exception_answer').replace('\\n', '\n')
         self.unknown_answer = parser.get(lan, 'unknown_answer')
+        self.execution_error = parser.get(lan, 'execution_error').replace('\\n', '\n')
         self.api_win_title = parser.get(lan, 'api_win_title').replace('\\n', '\n')
         self.input_tip = parser.get(lan, 'input_tip').replace('\\n', '\n')
         self.confirm_tip = parser.get(lan, 'confirm_tip').replace('\\n', '\n')
@@ -304,6 +305,9 @@ class MainWin(QWidget):
             return
         self.stdout = stdout
         self.stderro = stderror
+        if 'Traceback' in stderror:
+            self.chat_widget.chat_history.append(self.execution_error)
+            return
         # display the output and handle the error
         res = self.table_widget.insert_result(res=[stdout, stderror])
         if res:
