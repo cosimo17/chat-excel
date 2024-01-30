@@ -2,15 +2,18 @@ from functools import wraps
 import pickle
 import ast
 import re
+import sys
+import os
 
 
 def withoutconnect(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        self = args[0]
-        self.table_widget.itemChanged.disconnect()
-        r = func(self)
-        self.table_widget.itemChanged.connect(self.handle_item_changed)
+        win = args[0]
+        win.itemChanged.disconnect()
+        r = func(win, **kwargs)
+        win.itemChanged.connect(win.handle_item_changed)
+        return r
 
     return wrapper
 
@@ -113,3 +116,19 @@ def is_constant(line):
         return False
 
     return False
+
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+
+def hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip('#')
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))

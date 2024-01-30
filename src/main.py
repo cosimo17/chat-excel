@@ -1,26 +1,27 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableWidget, \
-    QTableWidgetItem, QHBoxLayout, QTextEdit, QShortcut, QMenuBar, \
-    QMenu, QAction, QFileDialog, QScrollArea, QPushButton, QLabel, QTabWidget, \
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, \
+    QHBoxLayout, QTextEdit, QShortcut, QMenuBar, \
+    QMenu, QAction, QScrollArea, QLabel, QTabWidget, \
     QComboBox, QInputDialog, QMessageBox
 from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import sys
-from richtext_display import CodeEditor
-from plotwin import PlotWidget
-from memo import TableMemo, InplaceModification, Modification
-import pandas as pd
-from copy import deepcopy
-from utis import withoutconnect, wrap_code, decodestdoutput, extract_func_info
-from interpreter import PythonInterpreter
-from chatgpt import ChatBot
-from prompt_template import prompt, chart_prompt
+from src.richtext_display import CodeEditor
+from src.plotwin import PlotWidget
+from src.memo import TableMemo
+from src.utis import wrap_code, decodestdoutput, extract_func_info, resource_path
+from src.interpreter import PythonInterpreter
+from src.chatgpt import ChatBot
+from src.prompt_template import prompt, chart_prompt, prompt_en, chart_prompt_en
 from openai.error import APIError, AuthenticationError
 from enum import Enum
 from pathlib import Path
 import os
-import locale
 from configparser import ConfigParser
-from logger import logger
+from src.logger import logger
+from src.tablewin import EnhancedTable, ResultTable
+from functools import partial
+import tempfile
+import shutil
 
 project_path = Path(__file__).parent.parent
 
@@ -108,16 +109,16 @@ class Mode(Enum):
     PLOT_MODE = 2
 
 
-class Main(QWidget):
+class MainWin(QWidget):
     def __init__(self):
-        super(Main, self).__init__()
+        super(MainWin, self).__init__()
         self.setWindowTitle("chat-excel")
-        self.loaded = False
+        self.language_configs = {}
+        self.current_language = 'zh'
         self.collapsed = False
         self.chat_widgets = None
         self.hbox = self.vbox = None
         self.table_widget = None
-        self.dataframe = None
         self.code = None
         self.chat_thread = None
         self.interpreter_thread = None
@@ -127,20 +128,21 @@ class Main(QWidget):
         self.token_count = 0
         self.default_answer = None
         self.exception_answer = None
+        self.fig_dir = tempfile.mkdtemp()
         self.recoder = TableMemo(self)
         self.init_ui()
         self.register_shortcut()
-        self.init_table()
         self.bot = ChatBot()
         self.api_key = os.getenv('APIKEY', None)
-        self.key_memo = os.path.join(project_path, "apikey.txt")
+        self.key_memo = "apikey.txt"
         if os.path.exists(self.key_memo):
             with open(self.key_memo, 'r') as f:
                 self.api_key = f.read().rstrip()
                 self.bot.set_api_key(self.api_key)
 
     def init_ui(self):
-        icon_path = os.path.join(str(project_path), "assets", "bot.jpg")
+        icon_path = os.path.join("assets", "bot.jpg")
+        icon_path = resource_path(icon_path)
         QApplication.setWindowIcon(QIcon(icon_path))
         hbox = QHBoxLayout()
         vbox = QVBoxLayout()
@@ -149,9 +151,14 @@ class Main(QWidget):
         self.vbox = vbox
         # chat_widget = QWidget()
         # container to display excel data
-        self.table_widget = QTableWidget()
-        self.table_widget.itemChanged.connect(self.handle_item_changed)
-        hbox.addWidget(self.table_widget, 3)
+        self.table_widget = EnhancedTable(self.fig_dir)
+        self.sheet_tabs = QTabWidget()
+        self.result_table = ResultTable(self)
+        self.table_widget.attach(self.result_table)
+        self.sheet_tabs.setTabPosition(QTabWidget.South)
+        self.sheet_tabs.addTab(self.table_widget, 'Your Sheet')
+        self.sheet_tabs.addTab(self.result_table, 'AI answer')
+        hbox.addWidget(self.sheet_tabs, 3)
 
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.West)
@@ -161,24 +168,45 @@ class Main(QWidget):
         self.tabs.addTab(self.chat_widget, "chat")
         self.tabs.addTab(self.plot_widget, 'plot')
         hbox.addWidget(self.tabs, 2)
-        # hbox.addWidget(self.chat_widget, 2)
 
         # menu setting
         menubar = QMenuBar()
-        fileMenu = QMenu("&File", self)
-        openAct = QAction('Open', self)
-        openAct.triggered.connect(self.open_excel)
+        menubar.setStyleSheet("QMenuBar { background-color: lightgreen; }")
+        fileMenu = QMenu("&文件", self)
+        self.language_configs[fileMenu] = {'en': "&File", 'zh': "&文件"}
+
+        openAct = QAction('打开', self)
+        self.language_configs[openAct] = {'en': "&open", 'zh': "&打开"}
+        openAct.triggered.connect(self.table_widget.open_excel)
         fileMenu.addAction(openAct)
-        saveAvt = QAction('Save', self)
-        saveAvt.triggered.connect(self.file_save)
-        fileMenu.addAction(saveAvt)
+        saveAct = QAction('保存', self)
+        self.language_configs[saveAct] = {'en': "&save", 'zh': "&保存"}
+        saveAct.triggered.connect(self.table_widget.file_save)
+        fileMenu.addAction(saveAct)
         menubar.addMenu(fileMenu)
         # Creating menus using a title
-        editMenu = menubar.addMenu("&Edit")
-        undoAct = QAction('Undo', self)
-        undoAct.triggered.connect(self.undo_modification)
+        editMenu = menubar.addMenu("&编辑")
+        self.language_configs[editMenu] = {'en': "&Edit", 'zh': "&编辑"}
+        undoAct = QAction('撤销修改', self)
+        self.language_configs[undoAct] = {'en': "&undo", 'zh': "&撤销修改"}
+        undoAct.triggered.connect(self.table_widget.undo_modification)
         editMenu.addAction(undoAct)
-        helpMenu = menubar.addMenu("&Help")
+
+        modelMenu = menubar.addMenu("&模型")
+        self.language_configs[modelMenu] = {'en': "&Model", 'zh': "&模型"}
+        openaiAct = QAction('chatgpt', self)
+        modelMenu.addAction(openaiAct)
+
+        lanMenu = menubar.addMenu("&语言(Language)")
+        setzhAct = QAction('中文', self)
+        setzhAct.triggered.connect(partial(self.reset_language, language='zh'))
+        lanMenu.addAction(setzhAct)
+        setenAct = QAction('English', self)
+        setenAct.triggered.connect(partial(self.reset_language, language='en'))
+        lanMenu.addAction(setenAct)
+
+        helpMenu = menubar.addMenu("&帮助")
+        self.language_configs[helpMenu] = {'en': "&Help", 'zh': "&帮助"}
         hbox.setMenuBar(menubar)
 
         self.setLayout(hbox)
@@ -187,18 +215,29 @@ class Main(QWidget):
         self.current_index = 0
         self.load_tips_info()
 
-    def load_tips_info(self):
-        language, region = locale.getlocale()
-        language = language.lower()
-        lan = 'chinese' if 'chinese' in language else 'english'
+    def load_tips_info(self, language=None):
+        lan = 'zh' if language is None else language
+        if os.path.exists(resource_path(os.path.join('src', 'tips_info.ini'))):
+            logger.debug("ini exist")
         parser = ConfigParser()
-        parser.read(os.path.join(str(project_path), 'src', 'tips_info.ini'), encoding='utf-8')
+        parser.read(resource_path(os.path.join('src', 'tips_info.ini')), encoding='utf-8')
         self.default_answer = parser.get(lan, 'default_answer').replace('\\n', '\n')
         self.exception_answer = parser.get(lan, 'exception_answer').replace('\\n', '\n')
         self.unknown_answer = parser.get(lan, 'unknown_answer')
         self.api_win_title = parser.get(lan, 'api_win_title').replace('\\n', '\n')
         self.input_tip = parser.get(lan, 'input_tip').replace('\\n', '\n')
         self.confirm_tip = parser.get(lan, 'confirm_tip').replace('\\n', '\n')
+
+    def reset_language(self, language='zh'):
+        if language not in ['zh', 'en']:
+            return
+        self.load_tips_info(language)
+        self.current_language = language
+        for item in self.language_configs.keys():
+            if isinstance(item, QMenu):
+                item.setTitle(self.language_configs[item][language])
+            if isinstance(item, QAction):
+                item.setText(self.language_configs[item][language])
 
     def register_shortcut(self):
         # hotkey
@@ -209,100 +248,6 @@ class Main(QWidget):
         # hide chat widget
         self.shortcut = QShortcut(QKeySequence(Qt.CTRL + Qt.Key_A), self)
         self.shortcut.activated.connect(self.collapse_chat_widget)
-
-        # undo modification
-        self.shortcut = QShortcut(QKeySequence(Qt.CTRL + Qt.Key_Z), self)
-        self.shortcut.activated.connect(self.undo_modification)
-
-    @withoutconnect
-    def init_table(self):
-        self.table_widget.setRowCount(20)
-        self.table_widget.setColumnCount(20)
-        for row in range(20):
-            for col in range(20):
-                self.table_widget.setItem(row, col, QTableWidgetItem(''))
-
-    @withoutconnect
-    def open_excel(self):
-        filename, filetype = QFileDialog.getOpenFileName(self, "select excel file", "", "*.xlsx;;*.xls;;All Files(*)")
-        if not filename:
-            return
-        self.load_data_with_pandas(filename)
-        self.loaded = True
-
-    def load_data_with_pandas(self, excel_file):
-        try:
-            df = pd.read_excel(excel_file)
-        except ValueError as e:
-            logger.debug(e)
-            return
-        shape = df.shape
-        rows, cols = shape
-        self.table_widget.setRowCount(rows + 1)
-        self.table_widget.setColumnCount(cols)
-        self.table_widget.setHorizontalHeaderLabels(list(df.columns))
-        for i in range(rows):
-            for j in range(cols):
-                value = df.iloc[i, j]
-                self.table_widget.setItem(i, j, QTableWidgetItem(str(value)))
-        for j in range(cols):
-            self.table_widget.setItem(rows, j, QTableWidgetItem(''))
-        self.dataframe = deepcopy(df)
-
-    def save(self):
-        return self.modification
-
-    def restore(self, modification):
-        if modification is None:
-            return
-        if isinstance(modification, InplaceModification):
-            rows = modification.row_indexs
-            cols = modification.col_indexs
-            values = modification.values
-            for i in range(len(modification)):
-                row, col, value = rows[i], cols[i], values[i]
-                if value != 'chatgpt-placeholder':
-                    self.table_widget.setItem(row, col, QTableWidgetItem(str(value)))
-                    d = self.dataframe.iloc[row, col]
-                    self.dataframe.iloc[row, col] = type(d)(value)
-                else:
-                    self.table_widget.setItem(row, col, QTableWidgetItem(''))
-        elif isinstance(modification, Modification):
-            df = modification.df
-            shape = df.shape
-            row_count = self.table_widget.rowCount()
-            col_count = self.table_widget.columnCount()
-            if shape == self.dataframe.shape:  # Update the entire table in place
-                for i in range(shape[0]):
-                    for j in range(shape[1]):
-                        value = df.iloc[i, j]
-                        self.table_widget.setItem(i, j, QTableWidgetItem(str(value)))
-            else:
-                # delete column
-                if shape[0] == self.dataframe.shape[0]:
-                    self.table_widget.setColumnCount(col_count - 1)
-
-                # delete row
-                if shape[1] == self.dataframe.shape[1]:
-                    self.table_widget.setRowCount(row_count - 1)
-
-    @withoutconnect
-    def undo_modification(self):
-        self.recoder.undo()
-
-    def save_checkpoint(self):
-        self.recoder.backup()
-
-    def handle_item_changed(self, item):
-        if self.dataframe is None:
-            return
-        row = item.row()
-        col = item.column()
-        value = item.text()
-        self.modification = InplaceModification([row], [col], [self.dataframe.iloc[row, col]])
-        d = self.dataframe.iloc[row, col]
-        self.dataframe.iloc[row, col] = type(d)(value)
-        self.save_checkpoint()
 
     def collapse_chat_widget(self):
         if not self.collapsed:
@@ -338,55 +283,18 @@ class Main(QWidget):
 
     def execute(self):
         if self.mode == Mode.CHAT_MODE:
-            code = wrap_code(self.code, self.dataframe)
+            code = wrap_code(self.code, self.table_widget.dataframe)
             self.interpreter_thread = QInterpreter(code)
             self.interpreter_thread.res_signal.connect(self.receive_output)
             self.interpreter_thread.start()
         elif self.mode == Mode.PLOT_MODE:
-            df = self.dataframe
+            df = self.table_widget.dataframe
             func_names, func_args, func_kwargs = extract_func_info(self.code, df)
             self.plot_widget.new_axes()
             self.plot_widget.call_func(func_names, func_args, func_kwargs)
             self.plot_widget.add_figure()
+            self.plot_widget.save_fig(self.fig_dir)
             self.tabs.setCurrentIndex(1)
-
-    @withoutconnect
-    def insert_result(self):
-        if self.stdout is None:
-            return
-        row_count = self.table_widget.rowCount()
-        col_count = self.table_widget.columnCount()
-        # result is DataFrame
-        if isinstance(self.stdout, pd.DataFrame):
-            df = self.stdout
-            shape = df.shape
-            if shape == self.dataframe.shape:  # Update the entire table in place
-                for i in range(shape[0]):
-                    for j in range(shape[1]):
-                        value = df.iloc[i, j]
-                        self.table_widget.setItem(i, j, QTableWidgetItem(str(value)))
-            else:
-                if shape[0] == self.dataframe.shape[0]:  # insert new column
-                    self.table_widget.setColumnCount(col_count + 1)
-                    self.table_widget.setHorizontalHeaderLabels(list(df.columns))
-                    for i in range(shape[0]):
-                        value = df.iloc[i, shape[1] - 1]
-                        self.table_widget.setItem(i, col_count, QTableWidgetItem(str(value)))
-                if shape[1] == self.dataframe.shape[1]:  # insert new row
-                    self.table_widget.setRowCount(row_count + 1)
-                    for j in range(shape[1]):
-                        value = df.iloc[shape[0] - 1, j]
-                        self.table_widget.setItem(row_count - 1, j, QTableWidgetItem(str(value)))
-            self.modification = Modification(deepcopy(self.dataframe))
-            self.save_checkpoint()
-            self.dataframe = df
-
-        # result is a scalar
-        else:
-            self.table_widget.setItem(row_count - 1, 0, QTableWidgetItem(str(self.stdout)))
-            self.modification = InplaceModification([row_count - 1], [0], ['chatgpt-placeholder'])
-            self.save_checkpoint()
-        self.stdout = None
 
     def receive_output(self, output):
         stdout, stderror = output
@@ -397,7 +305,9 @@ class Main(QWidget):
         self.stdout = stdout
         self.stderro = stderror
         # display the output and handle the error
-        self.insert_result()
+        res = self.table_widget.insert_result(res=[stdout, stderror])
+        if res:
+            self.sheet_tabs.setCurrentIndex(1)
 
     def chat(self):
         if self.api_key is None:
@@ -419,7 +329,7 @@ class Main(QWidget):
                 message = "Q:\n{}".format(message)
                 self.chat_widget.chat_history.append(message)
                 self.chat_widget.user_input.clear()
-                if self.dataframe is not None:
+                if self.table_widget.df_agent.df is not None:
                     formatted_prompt = self.format_prompt(task)
                 else:
                     formatted_prompt = ''
@@ -433,11 +343,15 @@ class Main(QWidget):
         return
 
     def format_prompt(self, task):
-        template_prompt = prompt if self.mode == Mode.CHAT_MODE else chart_prompt
-        formatted_prompt = '' if self.dataframe is None \
-            else template_prompt.format(self.dataframe.shape,
-                                        self.dataframe.head(3),
-                                        self.dataframe.dtypes, task)
+        template_prompts = {
+            Mode.CHAT_MODE: {'en': prompt_en, 'zh': prompt},
+            Mode.PLOT_MODE: {'en': chart_prompt_en, 'zh': chart_prompt}
+        }
+        template_prompt = template_prompts[self.mode][self.current_language]
+        formatted_prompt = '' if self.table_widget.dataframe is None \
+            else template_prompt.format(self.table_widget.df_agent.shape,
+                                        self.table_widget.df_agent.head(3),
+                                        self.table_widget.df_agent.dtypes, task)
         return formatted_prompt
 
     def receive_answer(self, res):
@@ -448,14 +362,6 @@ class Main(QWidget):
         self.current_index = 0
         self.timer.start(30)
 
-    def file_save(self):
-        file_filter = "*.xlsx;;*.xls;;All Files(*)"
-        path, _ = QFileDialog.getSaveFileName(self, "Save excel file", "", file_filter)
-
-        if not path:
-            return
-        self.dataframe.to_excel(path)
-
     def switch_mode(self, index):
         self.mode = Mode.PLOT_MODE if self.chat_widget.switch_mode_box.currentText() == "Plot" else Mode.CHAT_MODE
 
@@ -463,9 +369,15 @@ class Main(QWidget):
         with open(self.key_memo, 'w') as f:
             f.write(self.api_key)
 
+    def closeEvent(self, event):
+        try:
+            shutil.rmtree(self.fig_dir)
+        except:
+            pass
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = Main()
+    window = MainWin()
     window.showMaximized()
     app.exec_()

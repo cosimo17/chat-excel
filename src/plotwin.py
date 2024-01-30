@@ -1,3 +1,4 @@
+import os.path
 import sys
 import PyQt5.QtWidgets as QtWidgets
 from PyQt5.QtCore import Qt
@@ -12,6 +13,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvas
 from matplotlib.backends.backend_qtagg import \
     NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 
 
 class PlotWidget(QWidget):
@@ -22,7 +24,7 @@ class PlotWidget(QWidget):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content.setLayout(content_layout)
-        label = QLabel("Plots")
+        label = QLabel("No Plots Now")
         label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         content_layout.addWidget(label)
 
@@ -41,11 +43,15 @@ class PlotWidget(QWidget):
         self.current_ax = None
         self.current_static_canvas = None
         self.static_canvas = []
+        self.figs = []
+        self.tool_bars = []
 
     def new_axes(self):
         if self.ax_created():
             return
-        static_canvas = FigureCanvas(Figure(figsize=self.figsize))
+        new_fig = Figure(figsize=self.figsize)
+        self.figs.append(new_fig)
+        static_canvas = FigureCanvas(new_fig)
         ax = static_canvas.figure.subplots()
         self.current_ax = ax
         self.current_static_canvas = static_canvas
@@ -57,7 +63,10 @@ class PlotWidget(QWidget):
 
     def add_figure(self):
         if self.ax_created():
-            self.content_layout.addWidget(NavigationToolbar(self.current_static_canvas, self))
+            tool_bar = NavigationToolbar(self.current_static_canvas, self)
+
+            self.tool_bars.append(tool_bar)
+            self.content_layout.addWidget(tool_bar)
             self.content_layout.addWidget(self.current_static_canvas)
             self.content_layout.addStretch(1)
             self.static_canvas.append(self.current_static_canvas)
@@ -74,3 +83,12 @@ class PlotWidget(QWidget):
                 args = func_args[i]
                 kwargs = func_kwargs[i]
                 func(*args, **kwargs)
+
+    def save_fig(self, fig_dir):
+        if len(self.figs) == 0:
+            return
+        i = len(self.figs)
+        fig = self.figs[-1]
+        savename = 'Plot{:02d}.png'.format(i)
+        savename = os.path.join(fig_dir, savename)
+        fig.savefig(savename)
